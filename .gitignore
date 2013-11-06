@@ -1,0 +1,12 @@
+# Swap files
+.*.swp
+.swp
+.#*
+*~
+
+# Maven
+/target/
+
+# ElasticSearch
+/data/
+/logs/
