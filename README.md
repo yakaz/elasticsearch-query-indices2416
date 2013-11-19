@@ -9,7 +9,7 @@ Installation
 
 Simply run at the root of your ElasticSearch installation:
 
-	bin/plugin --url https://github.com/yakaz/elasticsearch-query-indices2416/releases/download/v1.0.0/elasticsearch-query-indices2416-1.0.0.zip --install elasticsearch-query-indices2416
+	bin/plugin --url https://github.com/yakaz/elasticsearch-query-indices2416/releases/download/v1.0.1/elasticsearch-query-indices2416-1.0.1.zip --install elasticsearch-query-indices2416
 
 This will download the plugin from the Central Maven Repository.
 
