@@ -24,15 +24,15 @@ import org.elasticsearch.action.support.IgnoreIndices;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.collect.Sets;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.xcontent.XContentParser;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
-import java.util.Set;
 
 /**
  */
@@ -62,8 +62,7 @@ public class Indices2416FilterParser implements FilterParser {
         Filter chosenFilter = null;
         boolean filterFound = false;
         boolean indicesFound = false;
-        Set<String> indices = Sets.newHashSet();
-        String[] concreteIndices = null;
+        boolean matchesConcreteIndices = false;
 
         String currentFieldName = null;
         XContentParser.Token token;
@@ -74,24 +73,28 @@ public class Indices2416FilterParser implements FilterParser {
                 if ("filter".equals(currentFieldName)) {
                     filterFound = true;
                     if (indicesFound) {
-                        if (matchesIndices(parseContext, concreteIndices)) {
+                        // Because we know the indices, we can either skip, or parse and use the query
+                        if (matchesConcreteIndices) {
                             filter = parseContext.parseInnerFilter();
                             chosenFilter = filter;
                         } else {
                             parseContext.parser().skipChildren(); // skip the filter object without parsing it into a Filter
                         }
                     } else {
+                        // We do not know the indices, we must parse the query
                         filter = parseContext.parseInnerFilter();
                     }
                 } else if ("no_match_filter".equals(currentFieldName)) {
                     if (indicesFound) {
-                        if (!matchesIndices(parseContext, concreteIndices)) {
+                        // Because we know the indices, we can either skip, or parse and use the query
+                        if (!matchesConcreteIndices) {
                             noMatchFilter = parseContext.parseInnerFilter();
                             chosenFilter = noMatchFilter;
                         } else {
                             parseContext.parser().skipChildren(); // skip the filter object without parsing it into a Filter
                         }
                     } else {
+                        // We do not know the indices, we must parse the query
                         noMatchFilter = parseContext.parseInnerFilter();
                     }
                 } else {
@@ -103,14 +106,15 @@ public class Indices2416FilterParser implements FilterParser {
                         throw  new QueryParsingException(parseContext.index(), "[indices] indices already specified");
                     }
                     indicesFound = true;
+                    Collection<String> indices = new ArrayList<String>();
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         String value = parser.textOrNull();
                         if (value == null) {
                             throw new QueryParsingException(parseContext.index(), "No value specified for term filter");
                         }
                         indices.add(value);
-                        concreteIndices = getConcreteIndices(indices);
                     }
+                    matchesConcreteIndices = matchesIndices(parseContext, getConcreteIndices(indices));
                 } else {
                     throw new QueryParsingException(parseContext.index(), "[indices] filter does not support [" + currentFieldName + "]");
                 }
@@ -120,8 +124,7 @@ public class Indices2416FilterParser implements FilterParser {
                         throw  new QueryParsingException(parseContext.index(), "[indices] indices already specified");
                     }
                     indicesFound = true;
-                    indices.add(parser.text());
-                    concreteIndices = getConcreteIndices(indices);
+                    matchesConcreteIndices = matchesIndices(parseContext, getConcreteIndices(Arrays.asList(parser.text())));
                 } else if ("no_match_filter".equals(currentFieldName)) {
                     String type = parser.text();
                     if ("all".equals(type)) {
@@ -130,7 +133,7 @@ public class Indices2416FilterParser implements FilterParser {
                         noMatchFilter = Queries.MATCH_NO_FILTER;
                     }
                     if (indicesFound) {
-                        if (!matchesIndices(parseContext, concreteIndices)) {
+                        if (!matchesConcreteIndices) {
                             chosenFilter = noMatchFilter;
                         }
                     }
@@ -142,12 +145,14 @@ public class Indices2416FilterParser implements FilterParser {
         if (!filterFound) {
             throw new QueryParsingException(parseContext.index(), "[indices] requires 'filter' element");
         }
-        if (indices.isEmpty()) {
+        if (!indicesFound) {
             throw new QueryParsingException(parseContext.index(), "[indices] requires 'indices' element");
         }
 
         if (chosenFilter == null) {
-            if (matchesIndices(parseContext, concreteIndices)) {
+            // Indices were not provided before we encountered the queries, which we hence parsed
+            // We must now make a choice
+            if (matchesConcreteIndices) {
                 chosenFilter = filter;
             } else {
                 chosenFilter = noMatchFilter;

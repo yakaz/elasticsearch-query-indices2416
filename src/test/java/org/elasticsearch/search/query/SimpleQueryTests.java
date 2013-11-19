@@ -19,173 +19,218 @@
 
 package org.elasticsearch.search.query;
 
+import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.common.Priority;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.index.query.FilterBuilders;
+import org.elasticsearch.index.query.FilterBuilder;
 import org.elasticsearch.index.query.Indices2416FilterBuilder;
 import org.elasticsearch.index.query.Indices2416QueryBuilder;
-import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.test.integration.BaseESTest;
-import org.testng.annotations.Test;
+import org.elasticsearch.index.query.QueryBuilder;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.junit.Test;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.index.query.FilterBuilders.hasChildFilter;
 import static org.elasticsearch.index.query.FilterBuilders.termFilter;
+import static org.elasticsearch.index.query.QueryBuilders.hasChildQuery;
 import static org.elasticsearch.index.query.QueryBuilders.matchQuery;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.junit.matchers.JUnitMatchers.either;
 
 /**
  *
  */
-public class SimpleQueryTests extends BaseESTest {
+// The following annotation slows down tests a lot, but prevents:
+// java.lang.NoSuchMethodError: org.elasticsearch.common.settings.Settings.getAsMap()Lcom/google/common/collect/ImmutableMap;
+//     at org.elasticsearch.test.ElasticsearchIntegrationTest.after(ElasticsearchIntegrationTest.java:225)
+@ElasticsearchIntegrationTest.ClusterScope(scope = ElasticsearchIntegrationTest.Scope.TEST)
+public class SimpleQueryTests extends ElasticsearchIntegrationTest {
+
+    /**
+     * A query that will execute the wrapped query only for the specified indices, and "match_all" when
+     * it does not match those indices.
+     */
+    public static Indices2416QueryBuilder indices2416Query(QueryBuilder queryBuilder, String... indices) {
+        return new Indices2416QueryBuilder(queryBuilder, indices);
+    }
+
+    public static Indices2416FilterBuilder indices2416Filter(FilterBuilder filter, String... indices) {
+        return new Indices2416FilterBuilder(filter, indices);
+    }
 
     @Test
-    public void testIndicesQuery() throws Exception {
-        client().admin()
-                .indices()
-                .prepareCreate("index1")
-                .addMapping("type1", jsonBuilder().startObject().startObject("type1").endObject().endObject())
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
-                .execute().actionGet();
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
+    public void testindices2416Query() throws Exception {
+        createIndex("index1", "index2");
+        ensureGreen();
 
-        client().admin()
-                .indices()
-                .prepareCreate("index2")
-                .addMapping("type2", jsonBuilder().startObject().startObject("type2").endObject().endObject())
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
-                .execute().actionGet();
-
-        client().prepareIndex("index1", "type1")
-                .setId("1")
-                .setSource(jsonBuilder().startObject().field("text", "value").endObject())
-                .execute().actionGet();
-        client().prepareIndex("index2", "type2")
-                .setId("2")
-                .setSource(jsonBuilder().startObject().field("text", "value").endObject())
-                .execute().actionGet();
-
-        client().admin().indices().prepareRefresh("index1", "index2")
-                .execute().actionGet();
+        client().prepareIndex("index1", "type1").setId("1").setSource("text", "value").get();
+        client().prepareIndex("index2", "type2").setId("2").setSource("text", "value").get();
+        refresh();
 
         SearchResponse response = client().prepareSearch("index1", "index2")
-                .setQuery(QueryBuilders.indicesQuery(matchQuery("text", "value"), "index1")
-                        .noMatchQuery(matchQuery("text", "value"))
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
+                .setQuery(indices2416Query(matchQuery("text", "value"), "index1")
+                        .noMatchQuery(matchQuery("text", "value"))).get();
+        assertHitCount(response, 2l);
         assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
         assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
 
         response = client().prepareSearch("index1", "index2")
-                .setQuery(QueryBuilders.indicesQuery(matchQuery("text", "value"), "index1")
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
+                .setQuery(indices2416Query(matchQuery("text", "value"), "index1")).get();
+        assertHitCount(response, 2l);
         assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
         assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
 
         response = client().prepareSearch("index1", "index2")
-                .setQuery(QueryBuilders.indicesQuery(matchQuery("text", "value"), "index1")
-                        .noMatchQuery("all")
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
+                .setQuery(indices2416Query(matchQuery("text", "value"), "index1")
+                        .noMatchQuery("all")).get();
+        assertHitCount(response, 2l);
         assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
         assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
 
         response = client().prepareSearch("index1", "index2")
-                .setQuery(QueryBuilders.indicesQuery(matchQuery("text", "value"), "index1")
-                        .noMatchQuery("none")
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(1l));
+                .setQuery(indices2416Query(matchQuery("text", "value"), "index1")
+                        .noMatchQuery("none")).get();
+        assertHitCount(response, 1l);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
+    }
 
+    @Test
+    public void testindices2416Filter() throws Exception {
+        createIndex("index1", "index2");
+        ensureGreen();
+
+        client().prepareIndex("index1", "type1").setId("1").setSource("text", "value").get();
+        client().prepareIndex("index2", "type2").setId("2").setSource("text", "value").get();
+        refresh();
+
+        SearchResponse response = client().prepareSearch("index1", "index2")
+                .setFilter(indices2416Filter(termFilter("text", "value"), "index1")
+                        .noMatchFilter(termFilter("text", "value"))).get();
+        assertHitCount(response, 2l);
+        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
+        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
+
+        response = client().prepareSearch("index1", "index2")
+                .setFilter(indices2416Filter(termFilter("text", "value"), "index1")).get();
+        assertHitCount(response, 2l);
+        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
+        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
+
+        response = client().prepareSearch("index1", "index2")
+                .setFilter(indices2416Filter(termFilter("text", "value"), "index1")
+                        .noMatchFilter("all")).get();
+        assertHitCount(response, 2l);
+        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
+        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
+
+        response = client().prepareSearch("index1", "index2")
+                .setFilter(indices2416Filter(termFilter("text", "value"), "index1")
+                        .noMatchFilter("none")).get();
+        assertHitCount(response, 1l);
+        assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
     }
 
     @Test // https://github.com/elasticsearch/elasticsearch/issues/2416
-    public void testIndicesQueryHideParsingExceptions() throws Exception {
-        client().admin()
-                .indices()
-                .prepareCreate("simple")
+    public void testindices2416QueryHideParsingExceptions() throws Exception {
+        client().admin().indices().prepareCreate("simple")
                 .addMapping("lone", jsonBuilder().startObject().startObject("lone").endObject().endObject())
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
-                .execute().actionGet();
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
-
-        client().admin()
-                .indices()
-                .prepareCreate("related")
+                .get();
+        client().admin().indices().prepareCreate("related")
                 .addMapping("parent", jsonBuilder().startObject().startObject("parent").endObject().endObject())
-                .addMapping(
-                        "child",
-                        jsonBuilder().startObject().startObject("child").startObject("_parent").field("type", "parent").endObject()
-                                .endObject().endObject())
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1).put("index.number_of_replicas", 0))
-                .execute().actionGet();
+                .addMapping("child", jsonBuilder().startObject().startObject("child").startObject("_parent").field("type", "parent")
+                        .endObject().endObject().endObject())
+                .get();
+        ensureGreen();
 
-        client().prepareIndex("simple", "lone")
-                .setId("1")
-                .setSource(jsonBuilder().startObject().field("text", "value").endObject())
-                .execute().actionGet();
-        client().prepareIndex("related", "parent")
-                .setId("2")
-                .setSource(jsonBuilder().startObject().field("text", "parent").endObject())
-                .execute().actionGet();
-        client().prepareIndex("related", "child")
-                .setId("3")
-                .setParent("2")
-                .setSource(jsonBuilder().startObject().field("text", "value").endObject())
-                .execute().actionGet();
-
-        client().admin().indices().prepareRefresh("simple", "related")
-                .execute().actionGet();
+        client().prepareIndex("simple", "lone").setId("1").setSource("text", "value").get();
+        client().prepareIndex("related", "parent").setId("2").setSource("text", "parent").get();
+        client().prepareIndex("related", "child").setId("3").setParent("2").setSource("text", "value").get();
+        refresh();
 
         SearchResponse response = client().prepareSearch("related")
-                .setQuery(QueryBuilders.hasChildQuery("child", matchQuery("text", "value"))).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(1l));
+                .setQuery(hasChildQuery("child", matchQuery("text", "value"))).get();
+        assertHitCount(response, 1l);
         assertThat(response.getHits().getAt(0).getId(), equalTo("2"));
 
         response = client().prepareSearch("simple")
-                .setQuery(matchQuery("text", "value")).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(1l));
+                .setQuery(matchQuery("text", "value")).get();
+        assertHitCount(response, 1l);
         assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
 
-        // Can't test the following because the raised error (attested by the failed shard), makes the test fail
-        //response = client().prepareSearch("simple")
-        //        .setQuery(QueryBuilders.hasChildQuery("child", matchQuery("text", "value"))).execute().actionGet();
-        //assertThat(response.getFailedShards(), equalTo(1));
-        //assertThat(response.getHits().totalHits(), equalTo(0l));
+        try {
+            client().prepareSearch("simple")
+                    .setQuery(hasChildQuery("child", matchQuery("text", "value"))).get();
+            fail("Should have failed with a SearchPhaseExecutionException because all shards failed with a nested QueryParsingException");
+            // If no failure happens, the HasChildQuery may have changed behavior when provided with wrong types
+        } catch (SearchPhaseExecutionException e) {
+            // There is no easy way to ensure we got a QueryParsingException
+        }
 
         response = client().prepareSearch("related", "simple")
-                .setQuery(new Indices2416QueryBuilder(matchQuery("text", "parent"), "related")
-                        .noMatchQuery(matchQuery("text", "value"))
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
+                .setQuery(indices2416Query(matchQuery("text", "parent"), "related")
+                        .noMatchQuery(matchQuery("text", "value"))).get();
+        assertHitCount(response, 2l);
         assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
         assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
 
         response = client().prepareSearch("related", "simple")
-                .setQuery(new Indices2416QueryBuilder(QueryBuilders.hasChildQuery("child", matchQuery("text", "value")), "related")
-                        .noMatchQuery(matchQuery("text", "value"))
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
-        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
-        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
-
-        response = client().prepareSearch("related", "simple")
-                .setFilter(new Indices2416FilterBuilder(FilterBuilders.hasChildFilter("child", termFilter("text", "value")), "related")
-                        .noMatchFilter(termFilter("text", "value"))
-                ).execute().actionGet();
-        assertThat(response.getFailedShards(), equalTo(0));
-        assertThat(response.getHits().totalHits(), equalTo(2l));
+                .setQuery(indices2416Query(hasChildQuery("child", matchQuery("text", "value")), "related")
+                        .noMatchQuery(matchQuery("text", "value"))).get();
+        assertHitCount(response, 2l);
         assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
         assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
     }
+
+
+    @Test // https://github.com/elasticsearch/elasticsearch/issues/2416
+    public void testindices2416FilterHideParsingExceptions() throws Exception {
+        client().admin().indices().prepareCreate("simple")
+                .addMapping("lone", jsonBuilder().startObject().startObject("lone").endObject().endObject())
+                .get();
+        client().admin().indices().prepareCreate("related")
+                .addMapping("parent", jsonBuilder().startObject().startObject("parent").endObject().endObject())
+                .addMapping("child", jsonBuilder().startObject().startObject("child").startObject("_parent").field("type", "parent")
+                        .endObject().endObject().endObject())
+                .get();
+        ensureGreen();
+
+        client().prepareIndex("simple", "lone").setId("1").setSource("text", "value").get();
+        client().prepareIndex("related", "parent").setId("2").setSource("text", "parent").get();
+        client().prepareIndex("related", "child").setId("3").setParent("2").setSource("text", "value").get();
+        refresh();
+
+        SearchResponse response = client().prepareSearch("related")
+                .setFilter(hasChildFilter("child", termFilter("text", "value"))).get();
+        assertHitCount(response, 1l);
+        assertThat(response.getHits().getAt(0).getId(), equalTo("2"));
+
+        response = client().prepareSearch("simple")
+                .setFilter(termFilter("text", "value")).get();
+        assertHitCount(response, 1l);
+        assertThat(response.getHits().getAt(0).getId(), equalTo("1"));
+
+        try {
+            client().prepareSearch("simple")
+                    .setFilter(hasChildFilter("child", termFilter("text", "value"))).get();
+            fail("Should have failed with a SearchPhaseExecutionException because all shards failed with a nested QueryParsingException");
+            // If no failure happens, the HasChildQuery may have changed behavior when provided with wrong types
+        } catch (SearchPhaseExecutionException e) {
+            // There is no easy way to ensure we got a QueryParsingException
+        }
+
+        response = client().prepareSearch("related", "simple")
+                .setFilter(indices2416Filter(termFilter("text", "parent"), "related")
+                        .noMatchFilter(termFilter("text", "value"))).get();
+        assertHitCount(response, 2l);
+        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
+        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
+
+        response = client().prepareSearch("related", "simple")
+                .setFilter(indices2416Filter(hasChildFilter("child", termFilter("text", "value")), "related")
+                        .noMatchFilter(termFilter("text", "value"))).get();
+        assertHitCount(response, 2l);
+        assertThat(response.getHits().getAt(0).getId(), either(equalTo("1")).or(equalTo("2")));
+        assertThat(response.getHits().getAt(1).getId(), either(equalTo("1")).or(equalTo("2")));
+    }
+
 }
