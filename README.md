@@ -4,6 +4,12 @@ Indices2416 Query Plugin
 This plugin provides the changes proposed in the [pull request #4111][pull4111] for the [ticket #2416][ticket2416].
 It provides with a new query and filter type `indices2416`, that maps exactly how the builtin `indices` equivalent works.
 
+DEPRECATION NOTICE
+------------------
+
+Since ElasticSearch v1.0.0.Beta2 and v0.90.8, the [pull request #4111][pull4111] has been merged, and this plugin is not longer necessary.
+Note though that this plugin uses `indices2416` as the query and filter name, whereas the upstream is simply `indices`.
+
 Installation
 ------------
 
